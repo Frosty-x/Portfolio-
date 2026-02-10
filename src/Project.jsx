@@ -51,23 +51,6 @@ const items = [
 const Project = () => {
   return (
     <section className="bg-black min-h-screen w-full ">
-      <div className='max-h-full'>
-           <StaggeredMenu
-    position="right"
-    items={menuItems}
-    displaySocials={false}
-    displayItemNumbering={true}
-    menuButtonColor="#ffffff"
-    openMenuButtonColor="#fff"
-    changeMenuColorOnOpen={true}
-    colors={['#B19EEF', '#5227FF']}
-    accentColor="#fc3503"
-    onMenuOpen={() => console.log('Menu opened')}
-    onMenuClose={() => console.log('Menu closed')}
-  />
-      </div>
-    
-
       {/* ===== TITLE ===== */}
 <div className="w-full flex justify-center items-center py-10">
   <div className="w-105 md:w-130">
@@ -87,7 +70,7 @@ const Project = () => {
 </div>
 
       {/* ===== PROJECT GRID ===== */}
-      <div className='gap-4'>
+      <div className='gap-8'>
         <ChromaGrid
         items={items}
         radius={300}

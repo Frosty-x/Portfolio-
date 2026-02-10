@@ -1,91 +1,223 @@
 import React from "react";
-import LogoLoop from "../bits/LogoLoop.jsx";
-import { SiInstagram, SiGithub, SiLinkedin, SiX } from "react-icons/si";
+import { Instagram, Github, Linkedin, Twitter, MapPin, Phone, Mail } from 'lucide-react';
 
 const techLogos = [
-  { node: <SiInstagram />, title: "Instagram", href: "https://www.instagram.com/_fr0sty___/" },
-  { node: <SiGithub />, title: "GitHub", href: "https://github.com/Frosty-x" },
-  { node: <SiLinkedin />, title: "LinkedIn", href: "https://www.linkedin.com/in/abhijit-mohanta-57660137b/" },
-  { node: <SiX />, title: "X", href: "https://x.com/Abhijit18091787" },
+  { node: <Instagram />, title: "Instagram", href: "https://www.instagram.com/_fr0sty___/" },
+  { node: <Github />, title: "GitHub", href: "https://github.com/Frosty-x" },
+  { node: <Linkedin />, title: "LinkedIn", href: "https://www.linkedin.com/in/abhijit-mohanta-57660137b/" },
+  { node: <Twitter />, title: "X", href: "https://x.com/Abhijit18091787" },
 ];
+
+const LogoLoop = ({ logos }) => {
+  return (
+    <div className="relative overflow-hidden py-12 my-16">
+      <div className="absolute inset-0 bg-gradient-to-r from-zinc-950 via-transparent to-zinc-950 z-10 pointer-events-none"></div>
+      <div className="flex animate-scroll">
+        {[...logos, ...logos, ...logos].map((logo, index) => (
+          <a
+            key={index}
+            href={logo.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-shrink-0 mx-12 text-zinc-600 hover:text-orange-500 transition-all duration-300 transform hover:scale-125"
+            style={{ fontSize: '40px' }}
+          >
+            {logo.node}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 const Connect = () => {
   return (
-    <section className="h-full w-full bg-linear-to-br  from-[#2b1b4d] via-[#120822] to-black text-white px-10 py-10">
+    <div className="min-h-screen bg-zinc-950 text-white relative overflow-hidden" style={{ fontFamily: "'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif" }}>
       
-      {/* Top Title */}
-      <div className="text-center mb-24">
-        <h1 className="text-6xl font-extrabold tracking-wide">Let’s Connect</h1>
-        <p className="mt-4 text-lg text-gray-300">
-          Crafting ideas into reality, one conversation at a time.
-        </p>
+      {/* Subtle grid background */}
+      <div className="fixed inset-0 opacity-30">
+        <div className="absolute inset-0" style={{
+          backgroundImage: `
+            linear-gradient(45deg, #0a0a0a 25%, transparent 25%),
+            linear-gradient(-45deg, #0a0a0a 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, #0a0a0a 75%),
+            linear-gradient(-45deg, transparent 75%, #0a0a0a 75%)
+          `,
+          backgroundSize: '4px 4px',
+          backgroundPosition: '0 0, 0 2px, 2px -2px, -2px 0px'
+        }}></div>
       </div>
+      
+      {/* Subtle grain texture */}
+      <div className="fixed inset-0 opacity-20" style={{
+        backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 200 200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'3\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")',
+        backgroundRepeat: 'repeat',
+        backgroundSize: '100px 100px'
+      }}></div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 pb-7 md:grid-cols-2 gap-20 items-center max-w-6xl mx-auto">
-
-        {/* Left */}
-        <div className="space-y-8">
-         <h2 className="text-5xl md:text-6xl font-bold leading-tight bg-clip-text text-zinc-500 ">
-  Ready to Transform Your Vision? <br /> Let’s Collaborate and Create Magic
-</h2>
+      <section className="pt-20 pb-20 px-6 container mx-auto relative z-10">
+        
+        {/* Top Title */}
+        <div className="text-center mb-16 md:mb-20 space-y-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full mx-auto mb-4 flex items-center justify-center">
+            <Mail className="w-6 h-6 text-white" />
+          </div>
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-light tracking-tight" style={{ fontWeight: 300 }}>
+            Let's <span className="text-orange-500 hover:tracking-wider transition-all duration-500 inline-block">Connect</span>
+          </h1>
+          <p className="text-sm text-zinc-400 uppercase tracking-widest font-light max-w-2xl mx-auto">
+            Crafting ideas into reality, one conversation at a time
+          </p>
+          <div className="w-24 h-0.5 bg-gradient-to-r from-transparent via-orange-500 to-transparent mx-auto"></div>
         </div>
 
-        {/* Right */}
-        <div className="space-y-6 text-gray-600">
-          <p>
-            I’m always excited to discuss new projects, innovative ideas, or just a friendly chat about technology and design. Reach out and let’s make something extraordinary.
-          </p>
+        {/* Main Content */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 md:gap-16 items-start max-w-6xl mx-auto mb-16">
 
-          <div>
-            <h4 className="text-white font-semibold">LOCATION</h4>
-            <p>India </p>
+          {/* Left Section */}
+          <div className="space-y-8">
+            <div className="space-y-4">
+              <p className="text-sm text-orange-500 uppercase tracking-widest font-light">GET IN TOUCH</p>
+              <h2 className="text-3xl md:text-4xl lg:text-5xl font-light leading-tight tracking-tight" style={{ fontWeight: 300 }}>
+                Ready to Transform Your Vision?
+                <br />
+                <span className="text-orange-500 hover:tracking-wider transition-all duration-500 inline-block">
+                  Let's Collaborate
+                </span>
+              </h2>
+            </div>
+
+            <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded hover:border-orange-500/30 transition-all duration-500 group">
+              <p className="text-zinc-300 leading-relaxed font-light group-hover:text-white transition-colors duration-300">
+                I'm always excited to discuss new projects, innovative ideas, or just a friendly chat about technology and design. Reach out and let's make something extraordinary.
+              </p>
+            </div>
+
+            {/* Availability Badge */}
+            <div className="flex flex-wrap items-center gap-4">
+              <span className="flex items-center space-x-2 bg-zinc-900/80 backdrop-blur-sm px-5 py-2.5 rounded-full border border-zinc-800 hover:border-orange-500/50 hover:bg-zinc-800/80 transition-all duration-300 cursor-pointer group">
+                <span className="w-1.5 h-1.5 bg-orange-500 rounded-full group-hover:animate-pulse"></span>
+                <span className="text-zinc-300 group-hover:text-white transition-colors text-sm tracking-wider uppercase font-light">Available for Projects</span>
+              </span>
+            </div>
           </div>
 
-          <div>
-            <h4 className="text-white font-semibold">PHONE</h4>
-            <p>+91 79789 97295 </p>
-          </div>
+          {/* Right Section - Contact Info */}
+          <div className="space-y-4">
+            
+            {/* Contact Cards */}
+            <ContactCard 
+              icon={<MapPin className="w-5 h-5" />}
+              title="LOCATION" 
+              content="Bhubaneswar, India" 
+            />
+            
+            <ContactCard 
+              icon={<Phone className="w-5 h-5" />}
+              title="PHONE" 
+              content="+91 79789 97295" 
+            />
+            
+            <ContactCard 
+              icon={<Mail className="w-5 h-5" />}
+              title="EMAIL" 
+              content="abhijeet2002mohanta@gmail.com" 
+              isEmail
+            />
 
-          <div>
-            <h4 className="text-white font-semibold">EMAIL</h4>
-            <p>abhijeet2002mohanta@gmail.com ✉️</p>
-          </div>
-
-          <div className="pb-25">
-            <h4 className="text-white font-semibold">FIND ME ON SOCIALS</h4>
-            <div className="flex gap-4 mt-2 text-2xl">
-              {techLogos.map((logo, index) => (
-                <a
-                  key={index}
-                  href={logo.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-purple-400 transition transform hover:scale-125"
-                  title={logo.title}
-                >
-                  {logo.node}
-                </a>
-              ))}
+            {/* Social Media */}
+            <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded hover:border-orange-500/30 transition-all duration-500 group cursor-pointer transform hover:scale-[1.02] hover:shadow-xl hover:shadow-orange-500/10">
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-600 rounded flex items-center justify-center">
+                  <span className="text-white text-sm">@</span>
+                </div>
+                <h4 className="text-orange-500 font-normal uppercase tracking-wider text-sm">Find Me On Socials</h4>
+              </div>
+              
+              <div className="grid grid-cols-4 gap-4">
+                {techLogos.map((logo, index) => (
+                  <a
+                    key={index}
+                    href={logo.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="relative flex items-center justify-center h-12 bg-zinc-900/50 border border-zinc-800 rounded text-zinc-500 hover:text-orange-500 hover:border-orange-500/50 transition-all duration-300 transform hover:scale-110 hover:-translate-y-1 group/icon"
+                    title={logo.title}
+                  >
+                    <span className="text-xl">{logo.node}</span>
+                    <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-gradient-to-r from-orange-500 to-orange-600 group-hover/icon:w-full transition-all duration-300"></span>
+                  </a>
+                ))}
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Logo Loop */}
+        <LogoLoop logos={techLogos} />
+
+        {/* Bottom Stats */}
+        <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto mt-16">
+          <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-8 text-center hover:border-orange-500/30 transition-all duration-500 rounded group cursor-pointer transform hover:scale-105 hover:-translate-y-2 hover:shadow-2xl hover:shadow-orange-500/10">
+            <p className="text-5xl font-light mb-2 text-orange-500 group-hover:scale-110 transition-transform duration-300" style={{ fontWeight: 300 }}>24/7</p>
+            <p className="text-sm text-zinc-400 uppercase tracking-widest font-light group-hover:text-zinc-300 transition-colors">Response Time</p>
+            <div className="mt-4 w-full h-0.5 bg-zinc-800 overflow-hidden">
+              <div className="h-full bg-orange-500 transform -translate-x-full group-hover:translate-x-0 transition-transform duration-700"></div>
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-orange-500/10 to-orange-600/10 backdrop-blur-md border border-orange-500/30 p-8 text-center transform hover:scale-105 transition-all duration-500 rounded cursor-pointer hover:-translate-y-2 hover:shadow-2xl hover:shadow-orange-500/20 group relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/20 to-orange-500/0 transform -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
+            <p className="text-5xl font-light mb-2 text-white relative z-10 group-hover:scale-110 transition-transform duration-300" style={{ fontWeight: 300 }}>100%</p>
+            <p className="text-sm text-zinc-300 uppercase tracking-widest font-light relative z-10 group-hover:text-white transition-colors">Dedication</p>
+          </div>
+          <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-8 text-center hover:border-orange-500/30 transition-all duration-500 rounded group cursor-pointer transform hover:scale-105 hover:-translate-y-2 hover:shadow-2xl hover:shadow-orange-500/10">
+            <p className="text-5xl font-light mb-2 text-orange-500 group-hover:scale-110 transition-transform duration-300" style={{ fontWeight: 300 }}>∞</p>
+            <p className="text-sm text-zinc-400 uppercase tracking-widest font-light group-hover:text-zinc-300 transition-colors">Possibilities</p>
+            <div className="mt-4 w-full h-0.5 bg-zinc-800 overflow-hidden">
+              <div className="h-full bg-orange-500 transform -translate-x-full group-hover:translate-x-0 transition-transform duration-700"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Decorative Element */}
+      <div className="fixed bottom-10 right-10 w-20 h-20 pointer-events-none opacity-30">
+        <div className="w-full h-full animate-spin-slow">
+          <svg viewBox="0 0 100 100" className="w-full h-full">
+            <path d="M50,10 L90,50 L50,90 L10,50 Z" fill="none" stroke="rgb(249, 115, 22)" strokeWidth="1" />
+            <circle cx="50" cy="50" r="3" fill="rgb(249, 115, 22)" />
+            <circle cx="50" cy="10" r="2" fill="rgb(249, 115, 22)" />
+            <circle cx="90" cy="50" r="2" fill="rgb(249, 115, 22)" />
+            <circle cx="50" cy="90" r="2" fill="rgb(249, 115, 22)" />
+            <circle cx="10" cy="50" r="2" fill="rgb(249, 115, 22)" />
+          </svg>
+        </div>
       </div>
-      {/* Logo Loop */}
-      <LogoLoop
-        logos={techLogos}
-        speed={100}
-        direction="left"
-        logoHeight={40}
-        gap={60}
-        hoverSpeed={0}
-        scaleOnHover
-        fadeOut
-        fadeOutColor="#000000"
-        ariaLabel="Technology partners"
-      />
-    </section>
+    </div>
   );
 };
+
+// Reusable Contact Card Component
+const ContactCard = ({ icon, title, content, isEmail }) => (
+  <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded hover:border-orange-500/30 transition-all duration-500 group cursor-pointer transform hover:translate-x-2 hover:shadow-xl hover:shadow-orange-500/10 relative overflow-hidden">
+    <div className="absolute left-0 top-0 bottom-0 w-1 bg-orange-500 transform -translate-x-full group-hover:translate-x-0 transition-transform duration-500"></div>
+    <div className="flex items-center space-x-3 mb-3">
+      <div className="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-600 rounded flex items-center justify-center text-white group-hover:scale-110 group-hover:rotate-12 transition-all duration-500">
+        {icon}
+      </div>
+      <h4 className="text-orange-500 font-normal uppercase tracking-wider text-sm">{title}</h4>
+    </div>
+    {isEmail ? (
+      <a 
+        href={`mailto:${content}`}
+        className="text-zinc-300 font-light group-hover:text-white transition-colors duration-300 block hover:underline"
+      >
+        {content}
+      </a>
+    ) : (
+      <p className="text-zinc-300 font-light group-hover:text-white transition-colors duration-300">{content}</p>
+    )}
+  </div>
+);
 
 export default Connect;
