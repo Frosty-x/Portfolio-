@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { mat4, quat, vec2, vec3 } from "gl-matrix";
 import { Link } from "react-router-dom";
+
+// ─── Shaders ────────────────────────────────────────────────────────────────
 
 const discVertShaderSource = `#version 300 es
 
@@ -23,7 +25,6 @@ flat out int vInstanceId;
 
 void main() {
     vec4 worldPosition = uWorldMatrix * aInstanceMatrix * vec4(aModelPosition, 1.);
-
     vec3 centerPos = (uWorldMatrix * aInstanceMatrix * vec4(0., 0., 0., 1.)).xyz;
     float radius = length(centerPos.xyz);
 
@@ -39,9 +40,7 @@ void main() {
     }
 
     worldPosition.xyz = radius * normalize(worldPosition.xyz);
-
     gl_Position = uProjectionMatrix * uViewMatrix * worldPosition;
-
     vAlpha = smoothstep(0.5, 1., normalize(worldPosition.xyz).z) * .9 + .1;
     vUvs = aModelUvs;
     vInstanceId = gl_InstanceID;
@@ -56,153 +55,102 @@ uniform int uItemCount;
 uniform int uAtlasSize;
 
 out vec4 outColor;
-
 in vec2 vUvs;
 in float vAlpha;
 flat in int vInstanceId;
 
 void main() {
     int itemIndex = vInstanceId % uItemCount;
-    int cellsPerRow = uAtlasSize;
-    int cellX = itemIndex % cellsPerRow;
-    int cellY = itemIndex / cellsPerRow;
-    vec2 cellSize = vec2(1.0) / vec2(float(cellsPerRow));
+    int cellX = itemIndex % uAtlasSize;
+    int cellY = itemIndex / uAtlasSize;
+    vec2 cellSize = vec2(1.0) / vec2(float(uAtlasSize));
     vec2 cellOffset = vec2(float(cellX), float(cellY)) * cellSize;
 
-    ivec2 texSize = textureSize(uTex, 0);
-    float imageAspect = float(texSize.x) / float(texSize.y);
-    float containerAspect = 1.0;
-    
-    float scale = max(imageAspect / containerAspect, 
-                     containerAspect / imageAspect);
-    
     vec2 st = vec2(vUvs.x, 1.0 - vUvs.y);
-    st = (st - 0.5) * scale + 0.5;
-    
-    st = clamp(st, 0.0, 1.0);
-    
     st = st * cellSize + cellOffset;
-    
+
     outColor = texture(uTex, st);
     outColor.a *= vAlpha;
 }
 `;
 
+// ─── Geometry ────────────────────────────────────────────────────────────────
+
 class Face {
-  constructor(a, b, c) {
-    this.a = a;
-    this.b = b;
-    this.c = c;
-  }
+  constructor(a, b, c) { this.a = a; this.b = b; this.c = c; }
 }
 
 class Vertex {
   constructor(x, y, z) {
     this.position = vec3.fromValues(x, y, z);
-    this.normal = vec3.create();
-    this.uv = vec2.create();
+    this.normal   = vec3.create();
+    this.uv       = vec2.create();
   }
 }
 
 class Geometry {
-  constructor() {
-    this.vertices = [];
-    this.faces = [];
-  }
+  constructor() { this.vertices = []; this.faces = []; }
 
   addVertex(...args) {
-    for (let i = 0; i < args.length; i += 3) {
+    for (let i = 0; i < args.length; i += 3)
       this.vertices.push(new Vertex(args[i], args[i + 1], args[i + 2]));
-    }
     return this;
   }
 
   addFace(...args) {
-    for (let i = 0; i < args.length; i += 3) {
+    for (let i = 0; i < args.length; i += 3)
       this.faces.push(new Face(args[i], args[i + 1], args[i + 2]));
-    }
     return this;
   }
 
-  get lastVertex() {
-    return this.vertices[this.vertices.length - 1];
-  }
+  get lastVertex() { return this.vertices[this.vertices.length - 1]; }
 
   subdivide(divisions = 1) {
-    const midPointCache = {};
+    const cache = {};
     let f = this.faces;
-
-    for (let div = 0; div < divisions; ++div) {
-      const newFaces = new Array(f.length * 4);
-
+    for (let d = 0; d < divisions; ++d) {
+      const next = new Array(f.length * 4);
       f.forEach((face, ndx) => {
-        const mAB = this.getMidPoint(face.a, face.b, midPointCache);
-        const mBC = this.getMidPoint(face.b, face.c, midPointCache);
-        const mCA = this.getMidPoint(face.c, face.a, midPointCache);
-
+        const mAB = this._mid(face.a, face.b, cache);
+        const mBC = this._mid(face.b, face.c, cache);
+        const mCA = this._mid(face.c, face.a, cache);
         const i = ndx * 4;
-        newFaces[i + 0] = new Face(face.a, mAB, mCA);
-        newFaces[i + 1] = new Face(face.b, mBC, mAB);
-        newFaces[i + 2] = new Face(face.c, mCA, mBC);
-        newFaces[i + 3] = new Face(mAB, mBC, mCA);
+        next[i]     = new Face(face.a, mAB, mCA);
+        next[i + 1] = new Face(face.b, mBC, mAB);
+        next[i + 2] = new Face(face.c, mCA, mBC);
+        next[i + 3] = new Face(mAB, mBC, mCA);
       });
-
-      f = newFaces;
+      f = next;
     }
-
     this.faces = f;
     return this;
   }
 
   spherize(radius = 1) {
-    this.vertices.forEach((vertex) => {
-      vec3.normalize(vertex.normal, vertex.position);
-      vec3.scale(vertex.position, vertex.normal, radius);
+    this.vertices.forEach((v) => {
+      vec3.normalize(v.normal, v.position);
+      vec3.scale(v.position, v.normal, radius);
     });
     return this;
   }
 
   get data() {
     return {
-      vertices: this.vertexData,
-      indices: this.indexData,
-      normals: this.normalData,
-      uvs: this.uvData,
+      vertices: new Float32Array(this.vertices.flatMap((v) => Array.from(v.position))),
+      indices:  new Uint16Array(this.faces.flatMap((f) => [f.a, f.b, f.c])),
+      normals:  new Float32Array(this.vertices.flatMap((v) => Array.from(v.normal))),
+      uvs:      new Float32Array(this.vertices.flatMap((v) => Array.from(v.uv))),
     };
   }
 
-  get vertexData() {
-    return new Float32Array(
-      this.vertices.flatMap((v) => Array.from(v.position)),
-    );
-  }
-
-  get normalData() {
-    return new Float32Array(this.vertices.flatMap((v) => Array.from(v.normal)));
-  }
-
-  get uvData() {
-    return new Float32Array(this.vertices.flatMap((v) => Array.from(v.uv)));
-  }
-
-  get indexData() {
-    return new Uint16Array(this.faces.flatMap((f) => [f.a, f.b, f.c]));
-  }
-
-  getMidPoint(ndxA, ndxB, cache) {
-    const cacheKey = ndxA < ndxB ? `k_${ndxB}_${ndxA}` : `k_${ndxA}_${ndxB}`;
-    if (Object.prototype.hasOwnProperty.call(cache, cacheKey)) {
-      return cache[cacheKey];
-    }
+  _mid(ndxA, ndxB, cache) {
+    const key = ndxA < ndxB ? `${ndxB}_${ndxA}` : `${ndxA}_${ndxB}`;
+    if (key in cache) return cache[key];
     const a = this.vertices[ndxA].position;
     const b = this.vertices[ndxB].position;
     const ndx = this.vertices.length;
-    cache[cacheKey] = ndx;
-    this.addVertex(
-      (a[0] + b[0]) * 0.5,
-      (a[1] + b[1]) * 0.5,
-      (a[2] + b[2]) * 0.5,
-    );
+    cache[key] = ndx;
+    this.addVertex((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5, (a[2] + b[2]) * 0.5);
     return ndx;
   }
 }
@@ -212,103 +160,14 @@ class IcosahedronGeometry extends Geometry {
     super();
     const t = Math.sqrt(5) * 0.5 + 0.5;
     this.addVertex(
-      -1,
-      t,
-      0,
-      1,
-      t,
-      0,
-      -1,
-      -t,
-      0,
-      1,
-      -t,
-      0,
-      0,
-      -1,
-      t,
-      0,
-      1,
-      t,
-      0,
-      -1,
-      -t,
-      0,
-      1,
-      -t,
-      t,
-      0,
-      -1,
-      t,
-      0,
-      1,
-      -t,
-      0,
-      -1,
-      -t,
-      0,
-      1,
+      -1, t, 0,  1, t, 0, -1,-t, 0,  1,-t, 0,
+       0,-1, t,  0, 1, t,  0,-1,-t,  0, 1,-t,
+       t, 0,-1,  t, 0, 1, -t, 0,-1, -t, 0, 1,
     ).addFace(
-      0,
-      11,
-      5,
-      0,
-      5,
-      1,
-      0,
-      1,
-      7,
-      0,
-      7,
-      10,
-      0,
-      10,
-      11,
-      1,
-      5,
-      9,
-      5,
-      11,
-      4,
-      11,
-      10,
-      2,
-      10,
-      7,
-      6,
-      7,
-      1,
-      8,
-      3,
-      9,
-      4,
-      3,
-      4,
-      2,
-      3,
-      2,
-      6,
-      3,
-      6,
-      8,
-      3,
-      8,
-      9,
-      4,
-      9,
-      5,
-      2,
-      4,
-      11,
-      6,
-      2,
-      10,
-      8,
-      6,
-      7,
-      9,
-      8,
-      1,
+      0,11,5, 0,5,1, 0,1,7, 0,7,10, 0,10,11,
+      1,5,9, 5,11,4, 11,10,2, 10,7,6, 7,1,8,
+      3,9,4, 3,4,2, 3,2,6, 3,6,8, 3,8,9,
+      4,9,5, 2,4,11, 6,2,10, 8,6,7, 9,8,1,
     );
   }
 }
@@ -317,77 +176,47 @@ class DiscGeometry extends Geometry {
   constructor(steps = 4, radius = 1) {
     super();
     steps = Math.max(4, steps);
-
     const alpha = (2 * Math.PI) / steps;
-
     this.addVertex(0, 0, 0);
     this.lastVertex.uv[0] = 0.5;
     this.lastVertex.uv[1] = 0.5;
-
     for (let i = 0; i < steps; ++i) {
       const x = Math.cos(alpha * i);
       const y = Math.sin(alpha * i);
       this.addVertex(radius * x, radius * y, 0);
       this.lastVertex.uv[0] = x * 0.5 + 0.5;
       this.lastVertex.uv[1] = y * 0.5 + 0.5;
-
-      if (i > 0) {
-        this.addFace(0, i, i + 1);
-      }
+      if (i > 0) this.addFace(0, i, i + 1);
     }
     this.addFace(0, steps, 1);
   }
 }
 
+// ─── WebGL helpers ───────────────────────────────────────────────────────────
+
 function createShader(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
-  const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
-
-  if (success) {
-    return shader;
-  }
-
+  if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return shader;
   console.error(gl.getShaderInfoLog(shader));
   gl.deleteShader(shader);
   return null;
 }
 
-function createProgram(
-  gl,
-  shaderSources,
-  transformFeedbackVaryings,
-  attribLocations,
-) {
+function createProgram(gl, [vertSrc, fragSrc], feedbackVaryings, attribLocations) {
   const program = gl.createProgram();
-
   [gl.VERTEX_SHADER, gl.FRAGMENT_SHADER].forEach((type, ndx) => {
-    const shader = createShader(gl, type, shaderSources[ndx]);
-    if (shader) gl.attachShader(program, shader);
+    const s = createShader(gl, type, [vertSrc, fragSrc][ndx]);
+    if (s) gl.attachShader(program, s);
   });
-
-  if (transformFeedbackVaryings) {
-    gl.transformFeedbackVaryings(
-      program,
-      transformFeedbackVaryings,
-      gl.SEPARATE_ATTRIBS,
-    );
-  }
-
-  if (attribLocations) {
-    for (const attrib in attribLocations) {
-      gl.bindAttribLocation(program, attribLocations[attrib], attrib);
-    }
-  }
-
+  if (feedbackVaryings)
+    gl.transformFeedbackVaryings(program, feedbackVaryings, gl.SEPARATE_ATTRIBS);
+  if (attribLocations)
+    for (const k in attribLocations)
+      gl.bindAttribLocation(program, attribLocations[k], k);
   gl.linkProgram(program);
-  const success = gl.getProgramParameter(program, gl.LINK_STATUS);
-
-  if (success) {
-    return program;
-  }
-
+  if (gl.getProgramParameter(program, gl.LINK_STATUS)) return program;
   console.error(gl.getProgramInfoLog(program));
   gl.deleteProgram(program);
   return null;
@@ -396,824 +225,649 @@ function createProgram(
 function makeVertexArray(gl, bufLocNumElmPairs, indices) {
   const va = gl.createVertexArray();
   gl.bindVertexArray(va);
-
-  for (const [buffer, loc, numElem] of bufLocNumElmPairs) {
+  for (const [buf, loc, n] of bufLocNumElmPairs) {
     if (loc === -1) continue;
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, numElem, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(loc, n, gl.FLOAT, false, 0, 0);
   }
-
   if (indices) {
-    const indexBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-    gl.bufferData(
-      gl.ELEMENT_ARRAY_BUFFER,
-      new Uint16Array(indices),
-      gl.STATIC_DRAW,
-    );
+    const ib = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
   }
-
   gl.bindVertexArray(null);
   return va;
 }
 
 function resizeCanvasToDisplaySize(canvas) {
   const dpr = Math.min(2, window.devicePixelRatio);
-  const displayWidth = Math.round(canvas.clientWidth * dpr);
-  const displayHeight = Math.round(canvas.clientHeight * dpr);
-  const needResize =
-    canvas.width !== displayWidth || canvas.height !== displayHeight;
-  if (needResize) {
-    canvas.width = displayWidth;
-    canvas.height = displayHeight;
-  }
-  return needResize;
+  const w = Math.round(canvas.clientWidth * dpr);
+  const h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width === w && canvas.height === h) return false;
+  canvas.width = w; canvas.height = h;
+  return true;
 }
 
-function makeBuffer(gl, sizeOrData, usage) {
+function makeBuffer(gl, data, usage) {
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, sizeOrData, usage);
+  gl.bufferData(gl.ARRAY_BUFFER, data, usage);
   gl.bindBuffer(gl.ARRAY_BUFFER, null);
   return buf;
 }
 
-function createAndSetupTexture(gl, minFilter, magFilter, wrapS, wrapT) {
-  const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
+function setupTexture(gl, minFilter, magFilter, wrapS, wrapT) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrapS);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrapT);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilter);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, magFilter);
-  return texture;
+  return tex;
 }
 
+// ─── ArcballControl ──────────────────────────────────────────────────────────
+
 class ArcballControl {
-  isPointerDown = false;
-  orientation = quat.create();
-  pointerRotation = quat.create();
+  isPointerDown    = false;
+  orientation      = quat.create();
+  pointerRotation  = quat.create();
   rotationVelocity = 0;
-  rotationAxis = vec3.fromValues(1, 0, 0);
-  snapDirection = vec3.fromValues(0, 0, -1);
+  rotationAxis     = vec3.fromValues(1, 0, 0);
+  snapDirection    = vec3.fromValues(0, 0, -1);
   snapTargetDirection;
-  EPSILON = 0.1;
-  IDENTITY_QUAT = quat.create();
+  EPSILON          = 0.1;
+  _IDENT           = quat.create();
+
+  _s = {
+    mid: vec2.create(),
+    p:   vec3.create(),
+    q:   vec3.create(),
+    a:   vec3.create(),
+    b:   vec3.create(),
+    snap: quat.create(),
+    comb: quat.create(),
+    axis: vec3.create(),
+  };
 
   constructor(canvas, updateCallback) {
     this.canvas = canvas;
-    this.updateCallback = updateCallback || (() => null);
+    this.updateCallback   = updateCallback || (() => {});
+    this.pointerPos       = vec2.create();
+    this.prevPointerPos   = vec2.create();
+    this._rotVel          = 0;
+    this._combinedQuat    = quat.create();
 
-    this.pointerPos = vec2.create();
-    this.previousPointerPos = vec2.create();
-    this._rotationVelocity = 0;
-    this._combinedQuat = quat.create();
-
-    canvas.addEventListener("pointerdown", (e) => {
+    const onDown  = (e) => {
       vec2.set(this.pointerPos, e.clientX, e.clientY);
-      vec2.copy(this.previousPointerPos, this.pointerPos);
+      vec2.copy(this.prevPointerPos, this.pointerPos);
       this.isPointerDown = true;
-    });
-    canvas.addEventListener("pointerup", () => {
-      this.isPointerDown = false;
-    });
-    canvas.addEventListener("pointerleave", () => {
-      this.isPointerDown = false;
-    });
-    canvas.addEventListener("pointermove", (e) => {
-      if (this.isPointerDown) {
-        vec2.set(this.pointerPos, e.clientX, e.clientY);
-      }
-    });
+    };
+    const onUp    = () => { this.isPointerDown = false; };
+    const onMove  = (e) => {
+      if (this.isPointerDown) vec2.set(this.pointerPos, e.clientX, e.clientY);
+    };
 
+    canvas.addEventListener("pointerdown",  onDown);
+    canvas.addEventListener("pointerup",    onUp);
+    canvas.addEventListener("pointerleave", onUp);
+    canvas.addEventListener("pointermove",  onMove);
     canvas.style.touchAction = "none";
+    this._off = () => {
+      canvas.removeEventListener("pointerdown",  onDown);
+      canvas.removeEventListener("pointerup",    onUp);
+      canvas.removeEventListener("pointerleave", onUp);
+      canvas.removeEventListener("pointermove",  onMove);
+    };
   }
 
+  destroy() { this._off(); }
+
   update(deltaTime, targetFrameDuration = 16) {
-    const timeScale = deltaTime / targetFrameDuration + 0.00001;
-    let angleFactor = timeScale;
-    let snapRotation = quat.create();
+    const ts = deltaTime / targetFrameDuration + 0.00001;
+    const s  = this._s;
+    let af   = ts;
+    quat.identity(s.snap);
 
     if (this.isPointerDown) {
-      const INTENSITY = 0.3 * timeScale;
-      const ANGLE_AMPLIFICATION = 5 / timeScale;
-
-      const midPointerPos = vec2.sub(
-        vec2.create(),
-        this.pointerPos,
-        this.previousPointerPos,
-      );
-      vec2.scale(midPointerPos, midPointerPos, INTENSITY);
-
-      if (vec2.sqrLen(midPointerPos) > this.EPSILON) {
-        vec2.add(midPointerPos, this.previousPointerPos, midPointerPos);
-
-        const p = this.#project(midPointerPos);
-        const q = this.#project(this.previousPointerPos);
-        const a = vec3.normalize(vec3.create(), p);
-        const b = vec3.normalize(vec3.create(), q);
-
-        vec2.copy(this.previousPointerPos, midPointerPos);
-
-        angleFactor *= ANGLE_AMPLIFICATION;
-
-        this.quatFromVectors(a, b, this.pointerRotation, angleFactor);
+      const intensity = 0.3 * ts;
+      vec2.sub(s.mid, this.pointerPos, this.prevPointerPos);
+      vec2.scale(s.mid, s.mid, intensity);
+      if (vec2.sqrLen(s.mid) > this.EPSILON) {
+        vec2.add(s.mid, this.prevPointerPos, s.mid);
+        this._project(s.mid, s.p);
+        this._project(this.prevPointerPos, s.q);
+        vec3.normalize(s.a, s.p);
+        vec3.normalize(s.b, s.q);
+        vec2.copy(this.prevPointerPos, s.mid);
+        af *= 5 / ts;
+        this._qFromVecs(s.a, s.b, this.pointerRotation, af);
       } else {
-        quat.slerp(
-          this.pointerRotation,
-          this.pointerRotation,
-          this.IDENTITY_QUAT,
-          INTENSITY,
-        );
+        quat.slerp(this.pointerRotation, this.pointerRotation, this._IDENT, intensity);
       }
     } else {
-      const INTENSITY = 0.1 * timeScale;
-      quat.slerp(
-        this.pointerRotation,
-        this.pointerRotation,
-        this.IDENTITY_QUAT,
-        INTENSITY,
-      );
-
+      quat.slerp(this.pointerRotation, this.pointerRotation, this._IDENT, 0.1 * ts);
       if (this.snapTargetDirection) {
-        const SNAPPING_INTENSITY = 0.2;
-        const a = this.snapTargetDirection;
-        const b = this.snapDirection;
-        const sqrDist = vec3.squaredDistance(a, b);
-        const distanceFactor = Math.max(0.1, 1 - sqrDist * 10);
-        angleFactor *= SNAPPING_INTENSITY * distanceFactor;
-        this.quatFromVectors(a, b, snapRotation, angleFactor);
+        const sqrDist = vec3.squaredDistance(this.snapTargetDirection, this.snapDirection);
+        af *= 0.2 * Math.max(0.1, 1 - sqrDist * 10);
+        this._qFromVecs(this.snapTargetDirection, this.snapDirection, s.snap, af);
       }
     }
 
-    const combinedQuat = quat.multiply(
-      quat.create(),
-      snapRotation,
-      this.pointerRotation,
-    );
-    this.orientation = quat.multiply(
-      quat.create(),
-      combinedQuat,
-      this.orientation,
-    );
+    quat.multiply(s.comb, s.snap, this.pointerRotation);
+    quat.multiply(this.orientation, s.comb, this.orientation);
     quat.normalize(this.orientation, this.orientation);
 
-    const RA_INTENSITY = 0.8 * timeScale;
-    quat.slerp(
-      this._combinedQuat,
-      this._combinedQuat,
-      combinedQuat,
-      RA_INTENSITY,
-    );
+    quat.slerp(this._combinedQuat, this._combinedQuat, s.comb, 0.8 * ts);
     quat.normalize(this._combinedQuat, this._combinedQuat);
 
-    const rad = Math.acos(this._combinedQuat[3]) * 2.0;
-    const s = Math.sin(rad / 2.0);
+    const rad = Math.acos(Math.min(1, this._combinedQuat[3])) * 2;
+    const sin = Math.sin(rad / 2);
     let rv = 0;
-    if (s > 0.000001) {
+    if (sin > 0.000001) {
       rv = rad / (2 * Math.PI);
-      this.rotationAxis[0] = this._combinedQuat[0] / s;
-      this.rotationAxis[1] = this._combinedQuat[1] / s;
-      this.rotationAxis[2] = this._combinedQuat[2] / s;
+      this.rotationAxis[0] = this._combinedQuat[0] / sin;
+      this.rotationAxis[1] = this._combinedQuat[1] / sin;
+      this.rotationAxis[2] = this._combinedQuat[2] / sin;
     }
 
-    const RV_INTENSITY = 0.5 * timeScale;
-    this._rotationVelocity += (rv - this._rotationVelocity) * RV_INTENSITY;
-    this.rotationVelocity = this._rotationVelocity / timeScale;
-
+    this._rotVel += (rv - this._rotVel) * 0.5 * ts;
+    this.rotationVelocity = this._rotVel / ts;
     this.updateCallback(deltaTime);
   }
 
-  quatFromVectors(a, b, out, angleFactor = 1) {
-    const axis = vec3.cross(vec3.create(), a, b);
-    vec3.normalize(axis, axis);
-    const d = Math.max(-1, Math.min(1, vec3.dot(a, b)));
-    const angle = Math.acos(d) * angleFactor;
-    quat.setAxisAngle(out, axis, angle);
-    return { q: out, axis, angle };
+  _qFromVecs(a, b, out, af = 1) {
+    vec3.cross(this._s.axis, a, b);
+    vec3.normalize(this._s.axis, this._s.axis);
+    quat.setAxisAngle(out, this._s.axis, Math.acos(Math.max(-1, Math.min(1, vec3.dot(a, b)))) * af);
+    return out;
   }
 
-  #project(pos) {
-    const r = 2;
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
+  _project(pos, out) {
+    const r = 2, w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     const s = Math.max(w, h) - 1;
-
     const x = (2 * pos[0] - w - 1) / s;
     const y = (2 * pos[1] - h - 1) / s;
-    let z = 0;
-    const xySq = x * x + y * y;
-    const rSq = r * r;
-
-    if (xySq <= rSq / 2.0) {
-      z = Math.sqrt(rSq - xySq);
-    } else {
-      z = rSq / Math.sqrt(xySq);
-    }
-    return vec3.fromValues(-x, y, z);
+    const xy = x * x + y * y, rr = r * r;
+    vec3.set(out, -x, y, xy <= rr / 2 ? Math.sqrt(rr - xy) : rr / Math.sqrt(xy));
+    return out;
   }
 }
 
+// ─── InfiniteGridMenu ────────────────────────────────────────────────────────
+
 class InfiniteGridMenu {
   TARGET_FRAME_DURATION = 1000 / 60;
-  SPHERE_RADIUS = 2;
+  SPHERE_RADIUS         = 2;
 
-  #time = 0;
-  #deltaTime = 0;
-  #deltaFrames = 0;
-  #frames = 0;
+  #t  = 0;
+  #dt = 0;
+  #df = 0;
+  #f  = 0;
+  #raf     = null;
+  #dead    = false;
 
   camera = {
     matrix: mat4.create(),
-    near: 0.1,
-    far: 40,
-    fov: Math.PI / 4,
-    aspect: 1,
+    near: 0.1, far: 40,
+    fov: Math.PI / 4, aspect: 1,
     position: vec3.fromValues(0, 0, 3),
     up: vec3.fromValues(0, 1, 0),
-    matrices: {
-      view: mat4.create(),
-      projection: mat4.create(),
-      inversProjection: mat4.create(),
-    },
+    matrices: { view: mat4.create(), projection: mat4.create(), inversProjection: mat4.create() },
   };
 
-  nearestVertexIndex = null;
-  smoothRotationVelocity = 0;
-  scaleFactor = 1.0;
+  smoothRotVel  = 0;
+  scaleFactor   = 1.0;
   movementActive = false;
 
-  constructor(
-    canvas,
-    items,
-    onActiveItemChange,
-    onMovementChange,
-    onInit = null,
-    scale = 1.0,
-  ) {
+  _m = Array.from({ length: 5 }, () => mat4.create());
+  _pWorld = vec3.create();
+  _pNeg   = vec3.create();
+
+  constructor(canvas, items, onActiveItemChange, onMovementChange, onInit = null, scale = 1.0) {
     this.canvas = canvas;
-    this.items = items || [];
-    this.onActiveItemChange = onActiveItemChange || (() => {});
-    this.onMovementChange = onMovementChange || (() => {});
-    this.scaleFactor = scale;
+    this.items  = items || [];
+    this.onActiveItem  = onActiveItemChange || (() => {});
+    this.onMovement    = onMovementChange   || (() => {});
+    this.scaleFactor   = scale;
     this.camera.position[2] = 3 * scale;
     this.#init(onInit);
   }
 
   resize() {
-    this.viewportSize = vec2.set(
-      this.viewportSize || vec2.create(),
-      this.canvas.clientWidth,
-      this.canvas.clientHeight,
+    vec2.set(
+      this.viewportSize || (this.viewportSize = vec2.create()),
+      this.canvas.clientWidth, this.canvas.clientHeight,
     );
-
     const gl = this.gl;
-    const needsResize = resizeCanvasToDisplaySize(gl.canvas);
-    if (needsResize) {
+    if (resizeCanvasToDisplaySize(gl.canvas))
       gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    }
-
-    this.#updateProjectionMatrix(gl);
+    this.#updateProj(gl);
   }
 
   run(time = 0) {
-    this.#deltaTime = Math.min(32, time - this.#time);
-    this.#time = time;
-    this.#deltaFrames = this.#deltaTime / this.TARGET_FRAME_DURATION;
-    this.#frames += this.#deltaFrames;
-
-    this.#animate(this.#deltaTime);
+    if (this.#dead) return;
+    this.#dt = Math.min(32, time - this.#t);
+    this.#t  = time;
+    this.#df = this.#dt / this.TARGET_FRAME_DURATION;
+    this.#f += this.#df;
+    this.#animate(this.#dt);
     this.#render();
+    this.#raf = requestAnimationFrame((t) => this.run(t));
+  }
 
-    requestAnimationFrame((t) => this.run(t));
+  destroy() {
+    this.#dead = true;
+    if (this.#raf !== null) cancelAnimationFrame(this.#raf);
+    this.control?.destroy();
+    const gl = this.gl;
+    if (!gl) return;
+    gl.deleteProgram(this.discProgram);
+    if (this.discInstances?.buffer) gl.deleteBuffer(this.discInstances.buffer);
+    if (this.tex) gl.deleteTexture(this.tex);
+    if (this.discVAO) gl.deleteVertexArray(this.discVAO);
   }
 
   #init(onInit) {
-    this.gl = this.canvas.getContext("webgl2", {
-      antialias: true,
-      alpha: false,
-    });
+    this.gl = this.canvas.getContext("webgl2", { antialias: true, alpha: true });
     const gl = this.gl;
-    if (!gl) {
-      throw new Error("No WebGL 2 context!");
-    }
+    if (!gl) throw new Error("No WebGL 2 context!");
 
-    this.viewportSize = vec2.fromValues(
-      this.canvas.clientWidth,
-      this.canvas.clientHeight,
-    );
+    this.viewportSize   = vec2.fromValues(this.canvas.clientWidth, this.canvas.clientHeight);
     this.drawBufferSize = vec2.clone(this.viewportSize);
 
     this.discProgram = createProgram(
-      gl,
-      [discVertShaderSource, discFragShaderSource],
-      null,
-      {
-        aModelPosition: 0,
-        aModelNormal: 1,
-        aModelUvs: 2,
-        aInstanceMatrix: 3,
-      },
+      gl, [discVertShaderSource, discFragShaderSource], null,
+      { aModelPosition: 0, aModelNormal: 1, aModelUvs: 2, aInstanceMatrix: 3 },
     );
 
-    this.discLocations = {
-      aModelPosition: gl.getAttribLocation(this.discProgram, "aModelPosition"),
-      aModelUvs: gl.getAttribLocation(this.discProgram, "aModelUvs"),
-      aInstanceMatrix: gl.getAttribLocation(
-        this.discProgram,
-        "aInstanceMatrix",
-      ),
-      uWorldMatrix: gl.getUniformLocation(this.discProgram, "uWorldMatrix"),
-      uViewMatrix: gl.getUniformLocation(this.discProgram, "uViewMatrix"),
-      uProjectionMatrix: gl.getUniformLocation(
-        this.discProgram,
-        "uProjectionMatrix",
-      ),
-      uCameraPosition: gl.getUniformLocation(
-        this.discProgram,
-        "uCameraPosition",
-      ),
-      uScaleFactor: gl.getUniformLocation(this.discProgram, "uScaleFactor"),
-      uRotationAxisVelocity: gl.getUniformLocation(
-        this.discProgram,
-        "uRotationAxisVelocity",
-      ),
-      uTex: gl.getUniformLocation(this.discProgram, "uTex"),
-      uFrames: gl.getUniformLocation(this.discProgram, "uFrames"),
-      uItemCount: gl.getUniformLocation(this.discProgram, "uItemCount"),
-      uAtlasSize: gl.getUniformLocation(this.discProgram, "uAtlasSize"),
+    const p = this.discProgram;
+    this.loc = {
+      aModelPosition:        gl.getAttribLocation(p,  "aModelPosition"),
+      aModelUvs:             gl.getAttribLocation(p,  "aModelUvs"),
+      aInstanceMatrix:       gl.getAttribLocation(p,  "aInstanceMatrix"),
+      uWorldMatrix:          gl.getUniformLocation(p, "uWorldMatrix"),
+      uViewMatrix:           gl.getUniformLocation(p, "uViewMatrix"),
+      uProjectionMatrix:     gl.getUniformLocation(p, "uProjectionMatrix"),
+      uCameraPosition:       gl.getUniformLocation(p, "uCameraPosition"),
+      uScaleFactor:          gl.getUniformLocation(p, "uScaleFactor"),
+      uRotationAxisVelocity: gl.getUniformLocation(p, "uRotationAxisVelocity"),
+      uTex:                  gl.getUniformLocation(p, "uTex"),
+      uFrames:               gl.getUniformLocation(p, "uFrames"),
+      uItemCount:            gl.getUniformLocation(p, "uItemCount"),
+      uAtlasSize:            gl.getUniformLocation(p, "uAtlasSize"),
     };
 
-    this.discGeo = new DiscGeometry(56, 1);
-    this.discBuffers = this.discGeo.data;
-    this.discVAO = makeVertexArray(
-      gl,
-      [
-        [
-          makeBuffer(gl, this.discBuffers.vertices, gl.STATIC_DRAW),
-          this.discLocations.aModelPosition,
-          3,
-        ],
-        [
-          makeBuffer(gl, this.discBuffers.uvs, gl.STATIC_DRAW),
-          this.discLocations.aModelUvs,
-          2,
-        ],
-      ],
-      this.discBuffers.indices,
-    );
+    const discGeo = new DiscGeometry(56, 1);
+    this.discBufs = discGeo.data;
+    this.discVAO  = makeVertexArray(gl, [
+      [makeBuffer(gl, this.discBufs.vertices, gl.STATIC_DRAW), this.loc.aModelPosition, 3],
+      [makeBuffer(gl, this.discBufs.uvs,      gl.STATIC_DRAW), this.loc.aModelUvs,      2],
+    ], this.discBufs.indices);
 
-    this.icoGeo = new IcosahedronGeometry();
-    this.icoGeo.subdivide(1).spherize(this.SPHERE_RADIUS);
-    this.instancePositions = this.icoGeo.vertices.map((v) => v.position);
-    this.DISC_INSTANCE_COUNT = this.icoGeo.vertices.length;
-    this.#initDiscInstances(this.DISC_INSTANCE_COUNT);
+    const ico = new IcosahedronGeometry();
+    ico.subdivide(1).spherize(this.SPHERE_RADIUS);
+    this.instancePos   = ico.vertices.map((v) => v.position);
+    this.DISC_COUNT    = ico.vertices.length;
+    this.#initInstances(this.DISC_COUNT);
 
     this.worldMatrix = mat4.create();
     this.#initTexture();
 
-    this.control = new ArcballControl(this.canvas, (deltaTime) =>
-      this.#onControlUpdate(deltaTime),
-    );
-
-    this.#updateCameraMatrix();
-    this.#updateProjectionMatrix(gl);
+    this.control = new ArcballControl(this.canvas, (dt) => this.#onCtrlUpdate(dt));
+    this.#updateCam();
+    this.#updateProj(gl);
     this.resize();
-
     if (onInit) onInit(this);
   }
 
   #initTexture() {
-    const gl = this.gl;
-    this.tex = createAndSetupTexture(
-      gl,
-      gl.LINEAR,
-      gl.LINEAR,
-      gl.CLAMP_TO_EDGE,
-      gl.CLAMP_TO_EDGE,
-    );
+    const gl       = this.gl;
+    this.tex       = setupTexture(gl, gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR, gl.CLAMP_TO_EDGE, gl.CLAMP_TO_EDGE);
+    const count    = Math.max(1, this.items.length);
+    this.atlasSize = Math.ceil(Math.sqrt(count));
+    const CELL     = 512;
+    const ac       = document.createElement("canvas");
+    ac.width       = this.atlasSize * CELL;
+    ac.height      = this.atlasSize * CELL;
+    const ctx      = ac.getContext("2d");
 
-    const itemCount = Math.max(1, this.items.length);
-    this.atlasSize = Math.ceil(Math.sqrt(itemCount));
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    const cellSize = 512;
+    ctx.fillStyle = "#111827";
+    ctx.fillRect(0, 0, ac.width, ac.height);
 
-    canvas.width = this.atlasSize * cellSize;
-    canvas.height = this.atlasSize * cellSize;
+    const upload = () => {
+      if (this.#dead) return;
+      gl.bindTexture(gl.TEXTURE_2D, this.tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ac);
+      gl.generateMipmap(gl.TEXTURE_2D);
+    };
+
+    upload();
 
     Promise.all(
-      this.items.map(
-        (item) =>
-          new Promise((resolve) => {
-            const img = new Image();
-            img.crossOrigin = "anonymous";
-            img.onload = () => resolve(img);
-            img.src = item.image;
-          }),
-      ),
+      this.items.map((item) => new Promise((res) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload  = () => res(img);
+        img.onerror = () => res(null);
+        img.src     = item.image;
+      })),
     ).then((images) => {
+      if (this.#dead) return;
       images.forEach((img, i) => {
-        const x = (i % this.atlasSize) * cellSize;
-        const y = Math.floor(i / this.atlasSize) * cellSize;
-        ctx.drawImage(img, x, y, cellSize, cellSize);
+        if (!img) return;
+        const x = (i % this.atlasSize) * CELL;
+        const y = Math.floor(i / this.atlasSize) * CELL;
+        const ar = img.naturalWidth / img.naturalHeight;
+        let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+        if (ar > 1) { sw = img.naturalHeight; sx = (img.naturalWidth  - sw) / 2; }
+        else        { sh = img.naturalWidth;  sy = (img.naturalHeight - sh) / 2; }
+        ctx.drawImage(img, sx, sy, sw, sh, x, y, CELL, CELL);
       });
-
-      gl.bindTexture(gl.TEXTURE_2D, this.tex);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        canvas,
-      );
-      gl.generateMipmap(gl.TEXTURE_2D);
+      upload();
     });
   }
 
-  #initDiscInstances(count) {
+  #initInstances(count) {
     const gl = this.gl;
-    this.discInstances = {
-      matricesArray: new Float32Array(count * 16),
-      matrices: [],
+    this.inst = {
+      arr:    new Float32Array(count * 16),
+      mats:   [],
       buffer: gl.createBuffer(),
     };
     for (let i = 0; i < count; ++i) {
-      const instanceMatrixArray = new Float32Array(
-        this.discInstances.matricesArray.buffer,
-        i * 16 * 4,
-        16,
-      );
-      instanceMatrixArray.set(mat4.create());
-      this.discInstances.matrices.push(instanceMatrixArray);
+      const slice = new Float32Array(this.inst.arr.buffer, i * 64, 16);
+      slice.set(mat4.create());
+      this.inst.mats.push(slice);
     }
     gl.bindVertexArray(this.discVAO);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.discInstances.buffer);
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      this.discInstances.matricesArray.byteLength,
-      gl.DYNAMIC_DRAW,
-    );
-    const mat4AttribSlotCount = 4;
-    const bytesPerMatrix = 16 * 4;
-    for (let j = 0; j < mat4AttribSlotCount; ++j) {
-      const loc = this.discLocations.aInstanceMatrix + j;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.inst.buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, this.inst.arr.byteLength, gl.DYNAMIC_DRAW);
+    const STRIDE = 64;
+    for (let j = 0; j < 4; ++j) {
+      const loc = this.loc.aInstanceMatrix + j;
       gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(
-        loc,
-        4,
-        gl.FLOAT,
-        false,
-        bytesPerMatrix,
-        j * 4 * 4,
-      );
+      gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, STRIDE, j * 16);
       gl.vertexAttribDivisor(loc, 1);
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
     gl.bindVertexArray(null);
   }
 
-  #animate(deltaTime) {
-    const gl = this.gl;
-    this.control.update(deltaTime, this.TARGET_FRAME_DURATION);
+  #animate(dt) {
+    this.control.update(dt, this.TARGET_FRAME_DURATION);
+    const [m0, m1, m2, m3, m4] = this._m;
+    const R = this.SPHERE_RADIUS;
+    const SCALE = 0.25, SCALE_I = 0.6;
 
-    let positions = this.instancePositions.map((p) =>
-      vec3.transformQuat(vec3.create(), p, this.control.orientation),
-    );
-    const scale = 0.25;
-    const SCALE_INTENSITY = 0.6;
-    positions.forEach((p, ndx) => {
-      const s =
-        (Math.abs(p[2]) / this.SPHERE_RADIUS) * SCALE_INTENSITY +
-        (1 - SCALE_INTENSITY);
-      const finalScale = s * scale;
-      const matrix = mat4.create();
-      mat4.multiply(
-        matrix,
-        matrix,
-        mat4.fromTranslation(mat4.create(), vec3.negate(vec3.create(), p)),
-      );
-      mat4.multiply(
-        matrix,
-        matrix,
-        mat4.targetTo(mat4.create(), [0, 0, 0], p, [0, 1, 0]),
-      );
-      mat4.multiply(
-        matrix,
-        matrix,
-        mat4.fromScaling(mat4.create(), [finalScale, finalScale, finalScale]),
-      );
-      mat4.multiply(
-        matrix,
-        matrix,
-        mat4.fromTranslation(mat4.create(), [0, 0, -this.SPHERE_RADIUS]),
-      );
+    this.instancePos.forEach((src, ndx) => {
+      vec3.transformQuat(this._pWorld, src, this.control.orientation);
+      const p  = this._pWorld;
+      const fs = ((Math.abs(p[2]) / R) * SCALE_I + (1 - SCALE_I)) * SCALE;
 
-      mat4.copy(this.discInstances.matrices[ndx], matrix);
+      vec3.negate(this._pNeg, p);
+      mat4.fromTranslation(m1, this._pNeg);
+      mat4.targetTo(m2, [0, 0, 0], p, [0, 1, 0]);
+      mat4.fromScaling(m3, [fs, fs, fs]);
+      mat4.fromTranslation(m4, [0, 0, -R]);
+
+      mat4.identity(m0);
+      mat4.multiply(m0, m0, m1);
+      mat4.multiply(m0, m0, m2);
+      mat4.multiply(m0, m0, m3);
+      mat4.multiply(m0, m0, m4);
+      mat4.copy(this.inst.mats[ndx], m0);
     });
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.discInstances.buffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.discInstances.matricesArray);
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.inst.buffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.inst.arr);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
-
-    this.smoothRotationVelocity = this.control.rotationVelocity;
+    this.smoothRotVel = this.control.rotationVelocity;
   }
 
   #render() {
-    const gl = this.gl;
+    const gl = this.gl, L = this.loc;
     gl.useProgram(this.discProgram);
-
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
-
+    // Use alpha: true context + clear to transparent so CSS bg shows through
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    gl.uniformMatrix4fv(
-      this.discLocations.uWorldMatrix,
-      false,
-      this.worldMatrix,
-    );
-    gl.uniformMatrix4fv(
-      this.discLocations.uViewMatrix,
-      false,
-      this.camera.matrices.view,
-    );
-    gl.uniformMatrix4fv(
-      this.discLocations.uProjectionMatrix,
-      false,
-      this.camera.matrices.projection,
-    );
-    gl.uniform3f(
-      this.discLocations.uCameraPosition,
-      this.camera.position[0],
-      this.camera.position[1],
-      this.camera.position[2],
-    );
+    gl.uniformMatrix4fv(L.uWorldMatrix,      false, this.worldMatrix);
+    gl.uniformMatrix4fv(L.uViewMatrix,       false, this.camera.matrices.view);
+    gl.uniformMatrix4fv(L.uProjectionMatrix, false, this.camera.matrices.projection);
+    gl.uniform3fv(L.uCameraPosition, this.camera.position);
     gl.uniform4f(
-      this.discLocations.uRotationAxisVelocity,
-      this.control.rotationAxis[0],
-      this.control.rotationAxis[1],
-      this.control.rotationAxis[2],
-      this.smoothRotationVelocity * 1.1,
+      L.uRotationAxisVelocity,
+      this.control.rotationAxis[0], this.control.rotationAxis[1], this.control.rotationAxis[2],
+      this.smoothRotVel * 1.1,
     );
-
-    gl.uniform1i(this.discLocations.uItemCount, this.items.length);
-    gl.uniform1i(this.discLocations.uAtlasSize, this.atlasSize);
-
-    gl.uniform1f(this.discLocations.uFrames, this.#frames);
-    gl.uniform1f(this.discLocations.uScaleFactor, this.scaleFactor);
-    gl.uniform1i(this.discLocations.uTex, 0);
+    gl.uniform1i(L.uItemCount,   this.items.length);
+    gl.uniform1i(L.uAtlasSize,   this.atlasSize);
+    gl.uniform1f(L.uFrames,      this.#f);
+    gl.uniform1f(L.uScaleFactor, this.scaleFactor);
+    gl.uniform1i(L.uTex, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
-
     gl.bindVertexArray(this.discVAO);
     gl.drawElementsInstanced(
-      gl.TRIANGLES,
-      this.discBuffers.indices.length,
-      gl.UNSIGNED_SHORT,
-      0,
-      this.DISC_INSTANCE_COUNT,
+      gl.TRIANGLES, this.discBufs.indices.length, gl.UNSIGNED_SHORT, 0, this.DISC_COUNT,
     );
   }
 
-  #updateCameraMatrix() {
-    mat4.targetTo(
-      this.camera.matrix,
-      this.camera.position,
-      [0, 0, 0],
-      this.camera.up,
-    );
+  #updateCam() {
+    mat4.targetTo(this.camera.matrix, this.camera.position, [0, 0, 0], this.camera.up);
     mat4.invert(this.camera.matrices.view, this.camera.matrix);
   }
 
-  #updateProjectionMatrix(gl) {
+  #updateProj(gl) {
     this.camera.aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
-    const height = this.SPHERE_RADIUS * 0.35;
-    const distance = this.camera.position[2];
-    if (this.camera.aspect > 1) {
-      this.camera.fov = 2 * Math.atan(height / distance);
-    } else {
-      this.camera.fov = 2 * Math.atan(height / this.camera.aspect / distance);
-    }
-    mat4.perspective(
-      this.camera.matrices.projection,
-      this.camera.fov,
-      this.camera.aspect,
-      this.camera.near,
-      this.camera.far,
-    );
-    mat4.invert(
-      this.camera.matrices.inversProjection,
-      this.camera.matrices.projection,
-    );
+    const h = this.SPHERE_RADIUS * 0.35, d = this.camera.position[2];
+    this.camera.fov = this.camera.aspect > 1
+      ? 2 * Math.atan(h / d)
+      : 2 * Math.atan(h / this.camera.aspect / d);
+    mat4.perspective(this.camera.matrices.projection, this.camera.fov, this.camera.aspect, this.camera.near, this.camera.far);
+    mat4.invert(this.camera.matrices.inversProjection, this.camera.matrices.projection);
   }
 
-  #onControlUpdate(deltaTime) {
-    const timeScale = deltaTime / this.TARGET_FRAME_DURATION + 0.0001;
-    let damping = 5 / timeScale;
-    let cameraTargetZ = 3 * this.scaleFactor;
-
-    const isMoving =
-      this.control.isPointerDown ||
-      Math.abs(this.smoothRotationVelocity) > 0.01;
-
-    if (isMoving !== this.movementActive) {
-      this.movementActive = isMoving;
-      this.onMovementChange(isMoving);
+  #onCtrlUpdate(dt) {
+    const ts = dt / this.TARGET_FRAME_DURATION + 0.0001;
+    let damping = 5 / ts;
+    let camZ    = 3 * this.scaleFactor;
+    const moving = this.control.isPointerDown || Math.abs(this.smoothRotVel) > 0.01;
+    if (moving !== this.movementActive) {
+      this.movementActive = moving;
+      this.onMovement(moving);
     }
-
     if (!this.control.isPointerDown) {
-      const nearestVertexIndex = this.#findNearestVertexIndex();
-      const itemIndex = nearestVertexIndex % Math.max(1, this.items.length);
-      this.onActiveItemChange(itemIndex);
-      const snapDirection = vec3.normalize(
-        vec3.create(),
-        this.#getVertexWorldPosition(nearestVertexIndex),
-      );
-      this.control.snapTargetDirection = snapDirection;
+      const ni = this.#nearest();
+      this.onActiveItem(ni % Math.max(1, this.items.length));
+      this.control.snapTargetDirection = vec3.normalize(vec3.create(), this.#worldPos(ni));
     } else {
-      cameraTargetZ += this.control.rotationVelocity * 80 + 2.5;
-      damping = 7 / timeScale;
+      camZ += this.control.rotationVelocity * 80 + 2.5;
+      damping = 7 / ts;
     }
-
-    this.camera.position[2] +=
-      (cameraTargetZ - this.camera.position[2]) / damping;
-    this.#updateCameraMatrix();
+    this.camera.position[2] += (camZ - this.camera.position[2]) / damping;
+    this.#updateCam();
   }
 
-  #findNearestVertexIndex() {
-    const n = this.control.snapDirection;
-    const inversOrientation = quat.conjugate(
-      quat.create(),
-      this.control.orientation,
-    );
-    const nt = vec3.transformQuat(vec3.create(), n, inversOrientation);
-
-    let maxD = -1;
-    let nearestVertexIndex;
-    for (let i = 0; i < this.instancePositions.length; ++i) {
-      const d = vec3.dot(nt, this.instancePositions[i]);
-      if (d > maxD) {
-        maxD = d;
-        nearestVertexIndex = i;
-      }
+  #nearest() {
+    const inv = quat.conjugate(quat.create(), this.control.orientation);
+    const nt  = vec3.transformQuat(vec3.create(), this.control.snapDirection, inv);
+    let maxD  = -1, best = 0;
+    for (let i = 0; i < this.instancePos.length; ++i) {
+      const d = vec3.dot(nt, this.instancePos[i]);
+      if (d > maxD) { maxD = d; best = i; }
     }
-    return nearestVertexIndex;
+    return best;
   }
 
-  #getVertexWorldPosition(index) {
-    const nearestVertexPos = this.instancePositions[index];
-    return vec3.transformQuat(
-      vec3.create(),
-      nearestVertexPos,
-      this.control.orientation,
-    );
+  #worldPos(i) {
+    return vec3.transformQuat(vec3.create(), this.instancePos[i], this.control.orientation);
   }
 }
 
-const defaultItems = [
-  {
-    image: "https://picsum.photos/900/900?grayscale",
-    link: "",
-    title: "",
-    description: "",
-  },
+// ─── React component ─────────────────────────────────────────────────────────
+
+const DEFAULT_ITEMS = [
+  { image: "https://picsum.photos/900/900?grayscale", link: "", title: "", description: "" },
 ];
+const MOBILE_BP = 640;
 
 export default function InfiniteMenu({ items = [], scale = 1.0 }) {
-  const canvasRef = useRef(null);
+  const canvasRef  = useRef(null);
+  const sketchRef  = useRef(null);
+
   const [activeItem, setActiveItem] = useState(null);
-  const [isMoving, setIsMoving] = useState(false);
+  const [isMoving,   setIsMoving]   = useState(false);
+  const [isMobile,   setIsMobile]   = useState(
+    typeof window !== "undefined" ? window.innerWidth < MOBILE_BP : false,
+  );
+
+  const resolvedItems = items.length ? items : DEFAULT_ITEMS;
+
+  const onActiveItem = useCallback(
+    (index) => setActiveItem(resolvedItems[index % resolvedItems.length]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items],
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    let sketch;
+    if (!canvas) return;
 
-    const handleActiveItem = (index) => {
-      const itemIndex = index % items.length;
-      setActiveItem(items[itemIndex]);
+    sketchRef.current = new InfiniteGridMenu(
+      canvas, resolvedItems, onActiveItem, setIsMoving, (sk) => sk.run(), scale,
+    );
+
+    const onResize = () => {
+      sketchRef.current?.resize();
+      setIsMobile(window.innerWidth < MOBILE_BP);
     };
-
-    if (canvas) {
-      sketch = new InfiniteGridMenu(
-        canvas,
-        items.length ? items : defaultItems,
-        handleActiveItem,
-        setIsMoving,
-        (sk) => sk.run(),
-        scale,
-      );
-    }
-
-    const handleResize = () => {
-      if (sketch) {
-        sketch.resize();
-      }
-    };
-
-    window.addEventListener("resize", handleResize);
-    handleResize();
+    window.addEventListener("resize", onResize);
+    onResize();
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("resize", onResize);
+      sketchRef.current?.destroy();
+      sketchRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, scale]);
 
-  const handleButtonClick = () => {
-    if (!activeItem?.link) return;
-    if (activeItem.link.startsWith("http")) {
-      window.open(activeItem.link, "_blank");
-    } else {
-      console.log("Internal route:", activeItem.link);
-    }
-  };
+  const isExternal = activeItem?.link?.startsWith("http");
+  const ease = "ease-[cubic-bezier(0.25,0.1,0.25,1.0)]";
+  const visible = "opacity-100 pointer-events-auto duration-[500ms]";
+  const hidden  = "opacity-0 pointer-events-none duration-[100ms]";
+
+  // Derive a plain string for aria-label — title may be a JSX element
+  const titleLabel = activeItem?.link?.replace("/", "") ?? "";
 
   return (
-    <div className="relative w-full h-full">
+    <div className="relative w-full h-full bg-zinc-950">
+
+      {/* ── Checkerboard background ── */}
+      <div className="absolute inset-0 opacity-30 pointer-events-none z-0">
+        <div className="absolute inset-0" style={{
+          backgroundImage: `
+            linear-gradient(45deg, #0a0a0a 25%, transparent 25%),
+            linear-gradient(-45deg, #0a0a0a 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, #0a0a0a 75%),
+            linear-gradient(-45deg, transparent 75%, #0a0a0a 75%)
+          `,
+          backgroundSize: '4px 4px',
+          backgroundPosition: '0 0, 0 2px, 2px -2px, -2px 0px'
+        }} />
+      </div>
+
+      {/* ── Grain texture ── */}
+      <div className="absolute inset-0 opacity-20 pointer-events-none z-0" style={{
+        backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 200 200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'3\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")',
+        backgroundRepeat: 'repeat',
+        backgroundSize: '100px 100px'
+      }} />
+
+      {/* ── WebGL canvas — z-10, sits above background layers ── */}
       <canvas
-        id="infinite-grid-menu-canvas"
         ref={canvasRef}
-        className="cursor-grab w-full h-full overflow-hidden relative outline-none active:cursor-grabbing"
+        className="absolute inset-0 z-10 cursor-grab w-full h-full outline-none active:cursor-grabbing block"
+        style={{ background: 'transparent' }}
       />
 
+      {/* ── UI layer — z-20, always above the canvas ── */}
       {activeItem && (
-        <>
-          <h2
-            className={`
-          select-none
-          absolute
-          font-black
-          [font-size:4rem]
-          left-[1.6em]
-          top-1/2
-          transform
-          translate-x-[20%]
-          -translate-y-1/2
-          transition-all
-          ease-[cubic-bezier(0.25,0.1,0.25,1.0)]
-          ${
-            isMoving
-              ? "opacity-0 pointer-events-none duration-[100ms]"
-              : "opacity-100 pointer-events-auto duration-[500ms]"
-          }
-        `}
-          >
-            {activeItem.title}
-          </h2>
+        <div className="absolute inset-0 z-20 pointer-events-none">
 
-          <p
-            className={`
-          select-none
-          absolute
-          max-w-[10ch]
-          text-[1.5rem]
-          top-1/2
-          right-[1%]
-          transition-all
-          ease-[cubic-bezier(0.25,0.1,0.25,1.0)]
-          ${
-            isMoving
-              ? "opacity-0 pointer-events-none duration-[100ms] translate-x-[-60%] -translate-y-1/2"
-              : "opacity-100 pointer-events-auto duration-[500ms] translate-x-[-90%] -translate-y-1/2"
-          }
-        `}
+          {/* ── Title (left on desktop, top-center on mobile) ── */}
+          <div
+            className={[
+              "select-none absolute transition-all",
+              ease,
+              isMobile
+                ? "left-1/2 -translate-x-1/2 top-[6%] text-center w-[90vw]"
+                : "left-[18%] top-1/2 -translate-y-1/2 max-w-[12ch]",
+              isMoving ? hidden : visible,
+            ].join(" ")}
           >
-            {activeItem.description}
-          </p>
+            <div
+              className="inline-block px-4 py-2 rounded-xl"
+              style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}
+            >
+              <h2 className="font-black text-white text-[1.5rem] sm:text-[2.2rem] xl:text-[2.8rem] leading-tight tracking-wide">
+                {activeItem.title}
+              </h2>
+            </div>
+          </div>
 
+          {/* ── Description (right on desktop, bottom-center on mobile) ── */}
+          <div
+            className={[
+              "select-none absolute transition-all",
+              ease,
+              isMobile
+                ? "left-1/2 -translate-x-1/2 bottom-[14%] text-center max-w-[80vw]"
+                : "right-[18%] top-1/2 max-w-[12ch]",
+              isMoving
+                ? isMobile ? hidden : `${hidden} -translate-y-1/2`
+                : isMobile ? visible : `${visible} -translate-y-1/2`,
+            ].join(" ")}
+          >
+            <div
+              className="inline-block px-4 py-2 rounded-xl"
+              style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}
+            >
+              <p className="text-orange-200 font-light text-[0.9rem] sm:text-[1rem] xl:text-[1.05rem] leading-relaxed">
+                {activeItem.description}
+              </p>
+            </div>
+          </div>
+
+          {/* ── CTA button (bottom center) ── */}
           <Link
             to={activeItem.link}
-            target={activeItem.link?.startsWith("http") ? "_blank" : "_self"}
-            rel="noopener noreferrer"
-            className={`
-    absolute
-    left-1/2
-    z-10
-    w-[60px]
-    h-[60px]
-    grid
-    place-items-center
-    bg-[#00ffff]
-    border-[5px]
-    border-black
-    rounded-full
-    cursor-pointer
-    transition-all
-    ease-[cubic-bezier(0.25,0.1,0.25,1.0)]
-    ${
-      isMoving
-        ? "bottom-[-80px] opacity-0 pointer-events-none duration-[100ms] scale-0 -translate-x-1/2"
-        : "bottom-[3.8em] opacity-100 pointer-events-auto duration-[500ms] scale-100 -translate-x-1/2"
-    }
-  `}
+            target={isExternal ? "_blank" : "_self"}
+            rel={isExternal ? "noopener noreferrer" : undefined}
+            aria-label={`Navigate to ${titleLabel}`}
+            className={[
+              "absolute left-1/2 -translate-x-1/2 pointer-events-auto",
+              "grid place-items-center",
+              "w-[52px] h-[52px] sm:w-[60px] sm:h-[60px]",
+              "bg-orange-500 hover:bg-orange-400 border-[3px] border-orange-300/40",
+              "rounded-full cursor-pointer transition-all shadow-lg shadow-orange-500/30",
+              ease,
+              isMoving
+                ? "bottom-[-80px] opacity-0 pointer-events-none duration-[100ms] scale-0"
+                : `${isMobile ? "bottom-[4%]" : "bottom-14"} opacity-100 duration-[500ms] scale-100`,
+            ].join(" ")}
           >
-            <p className="select-none relative text-[#060010] top-[2px] text-[26px]">
-              &#x2197;
-            </p>
+            <span aria-hidden className="select-none text-white text-[22px] sm:text-[26px] leading-none mt-0.5">
+              ↗
+            </span>
           </Link>
-        </>
+        </div>
       )}
     </div>
   );
